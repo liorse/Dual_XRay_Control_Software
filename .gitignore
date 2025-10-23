@@ -1,0 +1,46 @@
+# Visual Studio (VS2010) build artifacts and temp files
+
+# Build outputs
+Debug/
+Release/
+[Bb]in/
+[Oo]bj/
+
+# IntelliSense and database
+ipch/
+*.sdf
+*.opensdf
+*.ncb
+*.opendb
+*.db
+
+# User- and machine-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.user
+*.vcxproj.*.user
+
+# Intermediate/temporary files
+*.obj
+*.pdb
+*.idb
+*.ilk
+*.pch
+*.res
+*.tlog
+*.log
+*.lastbuildstate
+*.cache
+*.aps
+*.unsuccessfulbuild
+
+# Manifests generated during build
+*.manifest
+*.intermediate.manifest
+*.embed.manifest
+*.embed.manifest.res
+
+# Other VS transient files
+*.ipch
