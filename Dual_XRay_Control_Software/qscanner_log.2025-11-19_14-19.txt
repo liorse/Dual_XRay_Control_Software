@@ -1,0 +1,6 @@
+
+	***** Start MiniX X-Ray tube controller application *****
+Found 1 MiniX device(s)
+  Device 0: Serial Number 01532199
+WARNING: Requested serial number 01735659 not found!
+Switching to SIMULATION mode

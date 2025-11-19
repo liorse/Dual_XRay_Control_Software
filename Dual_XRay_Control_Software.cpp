@@ -43,6 +43,7 @@
 #include "TGNumberEntry.h"
 #include "TGLayout.h"
 #include "TGStatusBar.h"
+#include "TTimer.h"
 #include <stdio.h>
 #include "hwdrivers/XRay.h"
 #include "TSystem.h"
@@ -74,13 +75,40 @@ static std::string ReadXRaySerialFromConfig(const char* path)
 	return std::string();
 }
 
+// Read numeric parameter from config file
+static double ReadNumericFromConfig(const char* path, const char* paramName, double defaultVal)
+{
+	std::ifstream in(path);
+	if (!in.is_open()) return defaultVal;
+	std::string line;
+	size_t paramLen = strlen(paramName);
+	while (std::getline(in, line)) {
+		size_t start = line.find_first_not_of(" \t");
+		if (start == std::string::npos) continue;
+		if (line[start] == '#') continue;
+		if (line.compare(start, paramLen, paramName) == 0) {
+			size_t valStart = start + paramLen;
+			while (valStart < line.length() && (line[valStart] == ' ' || line[valStart] == '\t'))
+				valStart++;
+			if (valStart < line.length()) {
+				try {
+					return std::stod(line.substr(valStart));
+				} catch (...) {
+					return defaultVal;
+				}
+			}
+		}
+	}
+	return defaultVal;
+}
+
 // A small self-contained ROOT GUI that replicates the X-ray panel from EventDisplay.cxx
-// NOTE: This is GUI-only (no hardware I/O). Values update locally when you click Set.
 namespace XR {
 enum {
 	XR_SWITCH = 1001,
 	XR_SETV   = 1002,
-	XR_SETI   = 1003
+	XR_SETI   = 1003,
+	XR_TIMER  = 1004
 };
 
 class XRayGui : public TGMainFrame {
@@ -89,8 +117,8 @@ public:
 		: TGMainFrame(p, w, h, kVerticalFrame)
 		, xray_(xr)
 		, powerOn_(false)
-		, setV_kV_(40.0)
-		, setI_uA_(50.0)
+		, setV_kV_(ReadNumericFromConfig("qsv.conf", "XRVoltageToSet", 10.0))
+		, setI_uA_(ReadNumericFromConfig("qsv.conf", "XRCurrentToSet", 5.0))
 		, monV_kV_(0.0)
 		, monI_uA_(0.0)
 		, power_mW_(0.0)
@@ -98,11 +126,6 @@ public:
 	{
 		SetCleanup(kDeepCleanup);
 
-		// Prefer serial from config file; fallback to XRAY_SERIAL env.
-		std::string serialCfg = ReadXRaySerialFromConfig("qsv.conf");
-		const char* serialEnv = getenv("XRAY_SERIAL");
-		std::string serial = !serialCfg.empty() ? serialCfg : (serialEnv ? std::string(serialEnv) : std::string());
-		gXRay = new XRay(serial.empty() ? nullptr : serial.c_str());
 		gClient->GetColorByName("white", white_);
 		gClient->GetColorByName("black", black_);
 		gClient->GetColorByName("green", green_);
@@ -219,10 +242,16 @@ public:
 				lblPowerState_->SetForegroundColor(white_);
 				btnPower_->SetText("Switch off");
 			}
+			RefreshXRLabels();
+		} else {
+			// No hardware - use config defaults for display
 			numSetV_->SetNumber(setV_kV_);
 			numSetI_->SetNumber(setI_uA_);
-			RefreshXRLabels();
 		}
+
+		// Start timer to poll hardware every 500ms
+		timer_ = new TTimer(this, 500);
+		timer_->TurnOn();
 
 		MapSubwindows();
 		Resize(GetDefaultSize());
@@ -230,7 +259,12 @@ public:
 		UpdateStatus();
 	}
 
-	virtual ~XRayGui() {}
+	virtual ~XRayGui() {
+		if (timer_) {
+			timer_->TurnOff();
+			delete timer_;
+		}
+	}
 
 	// Ensure clicking the window X quits the ROOT event loop
 	virtual void CloseWindow() {
@@ -239,6 +273,16 @@ public:
 		} else {
 			gSystem->Exit(0);
 		}
+	}
+
+	// Handle timer events to poll hardware
+	virtual Bool_t HandleTimer(TTimer* /*timer*/) {
+		if (xray_) {
+			PullHardwareState();
+			RefreshXRLabels();
+			UpdateStatus();
+		}
+		return kTRUE;
 	}
 
 	Bool_t ProcessMessage(Long_t msg, Long_t parm1, Long_t /*parm2*/) {
@@ -365,6 +409,7 @@ private:
 	TGNumberEntry *numSetV_, *numSetI_;
 	TGLabel *lblPowerState_, *lblMonV_, *lblMonI_, *lblPower_mW_, *lblTempC_;
 	TGStatusBar *status_;
+	TTimer *timer_;
 
 	// Colors
 	Pixel_t white_, black_, green_, red_;
@@ -403,6 +448,20 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 	char* argv[] = { (char*)"DualXRApp", nullptr };
 	TApplication app("DualXRApp", &argc, argv);
 
+	// Create XRay hardware instance before GUI
+	std::string serialCfg = ReadXRaySerialFromConfig("qsv.conf");
+	const char* serialEnv = getenv("XRAY_SERIAL");
+	std::string serial = !serialCfg.empty() ? serialCfg : (serialEnv ? std::string(serialEnv) : std::string());
+	gXRay = new XRay(serial.empty() ? nullptr : serial.c_str());
+	
+	// Set default values from config immediately after connecting
+	if (gXRay) {
+		double defaultV = ReadNumericFromConfig("qsv.conf", "XRVoltageToSet", 10.0);
+		double defaultI = ReadNumericFromConfig("qsv.conf", "XRCurrentToSet", 5.0);
+		gXRay->SetXRayVoltage((Float_t)defaultV);
+		gXRay->SetXRayCurrent((Float_t)defaultI);
+		gXRay->SetXRayHVAndCurrent();
+	}
 	
 	// Create and show GUI, passing hardware driver pointer
 	new XR::XRayGui(gClient->GetRoot(), gXRay, 420, 340);
