@@ -44,6 +44,9 @@
     <ClCompile Include="Dual_XRay_Control_Software.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Vparams.cxx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Dual_XRay_Control_Software.rc">

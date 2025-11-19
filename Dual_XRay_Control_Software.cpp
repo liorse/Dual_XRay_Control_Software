@@ -44,6 +44,34 @@
 #include "TGLayout.h"
 #include "TGStatusBar.h"
 #include <stdio.h>
+#include "hwdrivers/XRay.h"
+#include "TSystem.h"
+
+// Global XRay instance (hardware driver). Created in WinMain.
+static XRay* gXRay = nullptr;
+
+// Read XRaySerialNumber "XXXXXXXX" from a simple key-value config file.
+static std::string ReadXRaySerialFromConfig(const char* path)
+{
+	std::ifstream in(path);
+	if (!in.is_open()) return std::string();
+	std::string line;
+	while (std::getline(in, line)) {
+		// Trim leading spaces
+		size_t start = line.find_first_not_of(" \t");
+		if (start == std::string::npos) continue;
+		if (line[start] == '#') continue; // comment
+		if (line.compare(start, strlen("XRaySerialNumber"), "XRaySerialNumber") == 0) {
+			// Find first quote
+			size_t q1 = line.find('"', start);
+			if (q1 == std::string::npos) break;
+			size_t q2 = line.find('"', q1+1);
+			if (q2 == std::string::npos) break;
+			return line.substr(q1+1, q2 - (q1+1));
+		}
+	}
+	return std::string();
+}
 
 // A small self-contained ROOT GUI that replicates the X-ray panel from EventDisplay.cxx
 // NOTE: This is GUI-only (no hardware I/O). Values update locally when you click Set.
@@ -56,8 +84,9 @@ enum {
 
 class XRayGui : public TGMainFrame {
 public:
-	XRayGui(const TGWindow* p, UInt_t w=400, UInt_t h=280)
+	XRayGui(const TGWindow* p, XRay* xr, UInt_t w=400, UInt_t h=300)
 		: TGMainFrame(p, w, h, kVerticalFrame)
+		, xray_(xr)
 		, powerOn_(false)
 		, setV_kV_(40.0)
 		, setI_uA_(50.0)
@@ -68,7 +97,11 @@ public:
 	{
 		SetCleanup(kDeepCleanup);
 
-		// Colors
+		// Prefer serial from config file; fallback to XRAY_SERIAL env.
+		std::string serialCfg = ReadXRaySerialFromConfig("qsv.conf");
+		const char* serialEnv = getenv("XRAY_SERIAL");
+		std::string serial = !serialCfg.empty() ? serialCfg : (serialEnv ? std::string(serialEnv) : std::string());
+		gXRay = new XRay(serial.empty() ? nullptr : serial.c_str());
 		gClient->GetColorByName("white", white_);
 		gClient->GetColorByName("black", black_);
 		gClient->GetColorByName("green", green_);
@@ -164,7 +197,32 @@ public:
 		status_ = new TGStatusBar(this);
 		AddFrame(status_, new TGLayoutHints(kLHintsBottom|kLHintsExpandX));
 
-		SetWindowName("X-ray Control (GUI only)");
+		SetWindowName("X-ray Control (Hardware)");
+
+		// Initialize from hardware state if available
+		if (xray_) {
+			// Read initial data
+			xray_->ReadXRayData();
+			XRay::XRayState st = xray_->GetXRayState();
+			setV_kV_ = st.VoltageToSet;
+			setI_uA_ = st.CurrentToSet;
+			monV_kV_ = st.ActualVoltage;
+			monI_uA_ = st.ActualCurrent;
+			power_mW_ = st.ActualPower;
+			temp_C_ = st.Temperature;
+			powerOn_ = st.Power;
+			// Adjust widgets to reflect hardware
+			if (powerOn_) {
+				lblPowerState_->SetText("Is on");
+				lblPowerState_->SetBackgroundColor(red_);
+				lblPowerState_->SetForegroundColor(white_);
+				btnPower_->SetText("Switch off");
+			}
+			numSetV_->SetNumber(setV_kV_);
+			numSetI_->SetNumber(setI_uA_);
+			RefreshXRLabels();
+		}
+
 		MapSubwindows();
 		Resize(GetDefaultSize());
 		MapWindow();
@@ -192,17 +250,23 @@ public:
 					return kTRUE;
 				} else if (parm1 == XR_SETV) {
 					setV_kV_ = numSetV_->GetNumber();
-					if (powerOn_) monV_kV_ = setV_kV_;
-					RecalcPower();
-					RefreshXRLabels();
-					UpdateStatus();
+					if (xray_) {
+						xray_->SetXRayVoltage((Float_t)setV_kV_);
+						if (powerOn_) xray_->SetXRayHVAndCurrent();
+						PullHardwareState();
+					}
+					else { if (powerOn_) monV_kV_ = setV_kV_; RecalcPower(); }
+					RefreshXRLabels(); UpdateStatus();
 					return kTRUE;
 				} else if (parm1 == XR_SETI) {
 					setI_uA_ = numSetI_->GetNumber();
-					if (powerOn_) monI_uA_ = setI_uA_;
-					RecalcPower();
-					RefreshXRLabels();
-					UpdateStatus();
+					if (xray_) {
+						xray_->SetXRayCurrent((Float_t)setI_uA_);
+						if (powerOn_) xray_->SetXRayHVAndCurrent();
+						PullHardwareState();
+					}
+					else { if (powerOn_) monI_uA_ = setI_uA_; RecalcPower(); }
+					RefreshXRLabels(); UpdateStatus();
 					return kTRUE;
 				}
 				break;
@@ -217,34 +281,43 @@ public:
 private:
 	void TogglePower() {
 		powerOn_ = !powerOn_;
+		if (xray_) {
+			// Apply desired settings before switching on
+			if (powerOn_) {
+				xray_->SetXRayVoltage((Float_t)setV_kV_);
+				xray_->SetXRayCurrent((Float_t)setI_uA_);
+				xray_->SetXRayHVAndCurrent();
+				xray_->SetXRayState(kTRUE);
+			} else {
+				xray_->SetXRayState(kFALSE);
+			}
+			PullHardwareState();
+		} else {
+			// Fallback to local simulation if hardware pointer absent
+			if (powerOn_) {
+				monV_kV_ = setV_kV_;
+				monI_uA_ = setI_uA_;
+				temp_C_ = 25.0 + 2.0;
+			} else {
+				monV_kV_ = 0.0; monI_uA_ = 0.0; temp_C_ = 25.0;
+			}
+		}
+		// Update widget visuals
 		if (powerOn_) {
 			lblPowerState_->SetText("Is on");
 			lblPowerState_->SetBackgroundColor(red_);
 			lblPowerState_->SetForegroundColor(white_);
 			btnPower_->SetText("Switch off");
-			// Assume immediate stabilization to set values for demo
-			monV_kV_ = setV_kV_;
-			monI_uA_ = setI_uA_;
-			// Heat up a little on power on
-			temp_C_ = 25.0 + 2.0;
 		} else {
 			lblPowerState_->SetText("Is off");
 			lblPowerState_->SetBackgroundColor(green_);
 			lblPowerState_->SetForegroundColor(red_);
 			btnPower_->SetText("Switch on");
-			monV_kV_ = 0.0;
-			monI_uA_ = 0.0;
-			temp_C_ = 25.0;
 		}
-		RecalcPower();
-		RefreshXRLabels();
-		UpdateStatus();
+		RecalcPower(); RefreshXRLabels(); UpdateStatus();
 	}
 
-	void RecalcPower() {
-		// mW = kV * uA
-		power_mW_ = monV_kV_ * monI_uA_;
-	}
+	void RecalcPower() { power_mW_ = monV_kV_ * monI_uA_; }
 
 	void RefreshXRLabels() {
 		char buf[64];
@@ -266,7 +339,19 @@ private:
 		status_->SetText(s);
 	}
 
+	void PullHardwareState() {
+		if (!xray_) return;
+		xray_->ReadXRayData();
+		XRay::XRayState st = xray_->GetXRayState();
+		powerOn_ = st.Power;
+		setV_kV_ = st.VoltageToSet; monV_kV_ = st.ActualVoltage;
+		setI_uA_ = st.CurrentToSet; monI_uA_ = st.ActualCurrent;
+		power_mW_ = st.ActualPower; temp_C_ = st.Temperature;
+	}
+
 private:
+	// Hardware pointer
+	XRay* xray_;
 	// State
 	bool   powerOn_;
 	double setV_kV_, setI_uA_;
@@ -317,10 +402,30 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 	char* argv[] = { (char*)"DualXRApp", nullptr };
 	TApplication app("DualXRApp", &argc, argv);
 
-	// Create and show GUI
-	new XR::XRayGui(gClient->GetRoot(), 420, 320);
+	// Instantiate hardware XRay object (serial optional via XRAY_SERIAL env)
+	const char* serialEnv = getenv("XRAY_SERIAL");
+	  // Read X-ray serial numbers from config
+  StringParameter *xrSN1 = params.conf->GetParameter<StringParameter>("XRaySerialNumber");
+  const char* serialNum1 = xrSN1 ? xrSN1->StrVal.c_str() : NULL;
+  
+  // Connect and init first XRay tube
+  if(serialNum1) {
+    printf("Initializing first X-ray tube with serial number: %s\n", serialNum1);
+  } else {
+    printf("Initializing first X-ray tube (no serial number specified)\n");
+  }
+  fXRay = new XRay(serialNum1);  
+  gSystem->Sleep(200);
+
+	gXRay = new XRay(serialEnv);
+
+	// Create and show GUI, passing hardware driver pointer
+	new XR::XRayGui(gClient->GetRoot(), gXRay, 420, 340);
 
 	app.Run();
+
+	// Cleanup
+	if (gXRay) { delete gXRay; gXRay = nullptr; }
 	return 0;
 
 }
