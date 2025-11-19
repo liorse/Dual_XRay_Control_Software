@@ -3,6 +3,8 @@
 
 #include "stdafx.h"
 #include "Dual_XRay_Control_Software.h"
+#include <fstream>
+#include <string>
 
 
 // Protect against macro collisions coming from Windows headers.
@@ -51,27 +53,37 @@
 
 // Global XRay instance (hardware driver). Created in WinMain.
 static XRay* gXRay = nullptr;
+static FILE* gLogFile = nullptr;
 
 // Read XRaySerialNumber "XXXXXXXX" from a simple key-value config file.
 static std::string ReadXRaySerialFromConfig(const char* path)
 {
 	std::ifstream in(path);
-	if (!in.is_open()) return std::string();
+	if (!in.is_open()) {
+		if (gLogFile) fprintf(gLogFile, "Warning: Could not open config file: %s\n", path);
+		return std::string();
+	}
+	if (gLogFile) fprintf(gLogFile, "Reading config file: %s\n", path);
 	std::string line;
+	const char* paramName = "XRaySerialNumber";
+	size_t paramLen = strlen(paramName);
 	while (std::getline(in, line)) {
 		// Trim leading spaces
 		size_t start = line.find_first_not_of(" \t");
 		if (start == std::string::npos) continue;
 		if (line[start] == '#') continue; // comment
-		if (line.compare(start, strlen("XRaySerialNumber"), "XRaySerialNumber") == 0) {
-			// Find first quote
-			size_t q1 = line.find('"', start);
+		if (line.compare(start, paramLen, paramName) == 0) {
+			// Find first quote after parameter name
+			size_t q1 = line.find('"', start + paramLen);
 			if (q1 == std::string::npos) break;
 			size_t q2 = line.find('"', q1+1);
 			if (q2 == std::string::npos) break;
-			return line.substr(q1+1, q2 - (q1+1));
+			std::string serial = line.substr(q1+1, q2 - (q1+1));
+			if (gLogFile) fprintf(gLogFile, "Found XRaySerialNumber: %s\n", serial.c_str());
+			return serial;
 		}
 	}
+	if (gLogFile) fprintf(gLogFile, "XRaySerialNumber not found in config file\n");
 	return std::string();
 }
 
@@ -458,16 +470,22 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 	char* argv[] = { (char*)"DualXRApp", nullptr };
 	TApplication app("DualXRApp", &argc, argv);
 
+	// Open log file
+	gLogFile = fopen("xray_debug.log", "w");
+	if (gLogFile) fprintf(gLogFile, "=== X-ray Control Software Started ===\n");
+
 	// Create XRay hardware instance before GUI
 	std::string serialCfg = ReadXRaySerialFromConfig("qsv.conf");
 	const char* serialEnv = getenv("XRAY_SERIAL");
 	std::string serial = !serialCfg.empty() ? serialCfg : (serialEnv ? std::string(serialEnv) : std::string());
+	if (gLogFile) fprintf(gLogFile, "Creating XRay with serial: %s\n", serial.empty() ? "(none)" : serial.c_str());
 	gXRay = new XRay(serial.empty() ? nullptr : serial.c_str());
 	
 	// Set default values from config immediately after connecting
 	if (gXRay) {
 		double defaultV = ReadNumericFromConfig("qsv.conf", "XRVoltageToSet", 10.0);
 		double defaultI = ReadNumericFromConfig("qsv.conf", "XRCurrentToSet", 5.0);
+		if (gLogFile) fprintf(gLogFile, "Setting defaults: V=%.1f kV, I=%.1f uA\n", defaultV, defaultI);
 		gXRay->SetXRayVoltage((Float_t)defaultV);
 		gXRay->SetXRayCurrent((Float_t)defaultI);
 		gXRay->SetXRayHVAndCurrent();
@@ -480,6 +498,11 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 
 	// Cleanup
 	if (gXRay) { delete gXRay; gXRay = nullptr; }
+	if (gLogFile) { 
+		fprintf(gLogFile, "=== Application Shutdown ===\n");
+		fclose(gLogFile); 
+		gLogFile = nullptr; 
+	}
 	return 0;
 
 }
