@@ -131,8 +131,10 @@ public:
 		gClient->GetColorByName("green", green_);
 		gClient->GetColorByName("red", red_);
 
-		// Root vertical layout
-		auto* xrGroup = new TGGroupFrame(this, "X-ray");
+		// Root vertical layout - set title to include serial number
+		std::string serialCfg = ReadXRaySerialFromConfig("qsv.conf");
+		std::string groupTitle = serialCfg.empty() ? "X-ray" : "X-ray - " + serialCfg;
+		auto* xrGroup = new TGGroupFrame(this, groupTitle.c_str());
 		xrGroup->SetTitlePos(TGGroupFrame::kCenter);
 
 		// Row: Power
@@ -264,10 +266,18 @@ public:
 			timer_->TurnOff();
 			delete timer_;
 		}
+		// Turn off X-ray before closing
+		if (xray_ && powerOn_) {
+			xray_->SetXRayState(kFALSE);
+		}
 	}
 
 	// Ensure clicking the window X quits the ROOT event loop
 	virtual void CloseWindow() {
+		// Turn off X-ray before exiting
+		if (xray_ && powerOn_) {
+			xray_->SetXRayState(kFALSE);
+		}
 		if (gApplication) {
 			gApplication->Terminate(0);
 		} else {

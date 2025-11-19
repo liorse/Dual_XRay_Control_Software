@@ -44,3 +44,4 @@ ipch/
 
 # Other VS transient files
 *.ipch
+*.txt
