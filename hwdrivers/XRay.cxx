@@ -1,4 +1,5 @@
-#include "hwdrivers/XRay.h"
+#include "stdafx.h"
+#include "XRay.h"
 
 #include <stdio.h>
 #include <TSystem.h>

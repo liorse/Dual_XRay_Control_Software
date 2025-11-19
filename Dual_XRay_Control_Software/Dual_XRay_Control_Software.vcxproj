@@ -55,7 +55,7 @@
       <!-- Define USE_ROOT to enable ROOT GUI code. Set ROOTSYS env var or update paths below. -->
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;USE_ROOT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- Add ROOT include directory (uses $(ROOTSYS) placeholder) -->
-      <AdditionalIncludeDirectories>$(ROOTSYS)\include;c:\root\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir);$(ROOTSYS)\include;c:\root\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
     </ClCompile>
@@ -63,7 +63,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <!-- Use RootSysDir to reference ROOT include/libs. Ensure RootSysDir is set (or ROOTSYS env var). -->
-      <AdditionalLibraryDirectories>$(ROOTSYS)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(ROOTSYS)\lib;$(SolutionDir)\external_lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <!-- Typical ROOT libraries - adjust names to match your ROOT build (debug vs release suffixes) -->
       <AdditionalDependencies>c:\root\lib\*.lib;$(ROOTSYS)\lib\*.lib;$(SolutionDir)\external_lib\*.lib;$(SolutionDir)\external_lib\*.dll;setupapi.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
@@ -77,7 +77,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <!-- Define USE_ROOT to enable ROOT GUI code. -->
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;USE_ROOT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ROOTSYS)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir);$(ROOTSYS)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -89,26 +89,31 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <None Include="Dual_XRay_Control_Software.ico" />
-    <None Include="ReadMe.txt" />
-    <None Include="small.ico" />
+    <None Include="..\Dual_XRay_Control_Software.ico" />
+    <None Include="..\README.md" />
+    <None Include="..\small.ico" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Dual_XRay_Control_Software.h" />
-    <ClInclude Include="Resource.h" />
-    <ClInclude Include="stdafx.h" />
-    <ClInclude Include="targetver.h" />
+    <ClInclude Include="..\Dual_XRay_Control_Software.h" />
+    <ClInclude Include="..\Resource.h" />
+    <ClInclude Include="..\stdafx.h" />
+    <ClInclude Include="..\targetver.h" />
+    <ClInclude Include="..\Vparams.h" />
+    <ClInclude Include="..\hwdrivers\XRay.h" />
+    <ClInclude Include="..\config\AnalysisConfig.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Dual_XRay_Control_Software.cpp" />
-    <ClCompile Include="stdafx.cpp">
+    <ClCompile Include="..\Dual_XRay_Control_Software.cpp" />
+    <ClCompile Include="..\stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="Vparams.cxx" />
+    <ClCompile Include="..\Vparams.cxx" />
+    <ClCompile Include="..\hwdrivers\XRay.cxx" />
+    <ClCompile Include="..\config\AnalysisConfig.cxx" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="Dual_XRay_Control_Software.rc" />
+    <ResourceCompile Include="..\Dual_XRay_Control_Software.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

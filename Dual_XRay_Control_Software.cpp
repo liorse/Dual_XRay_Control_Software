@@ -46,6 +46,7 @@
 #include <stdio.h>
 #include "hwdrivers/XRay.h"
 #include "TSystem.h"
+#include "Vparams.h"
 
 // Global XRay instance (hardware driver). Created in WinMain.
 static XRay* gXRay = nullptr;
@@ -402,23 +403,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 	char* argv[] = { (char*)"DualXRApp", nullptr };
 	TApplication app("DualXRApp", &argc, argv);
 
-	// Instantiate hardware XRay object (serial optional via XRAY_SERIAL env)
-	const char* serialEnv = getenv("XRAY_SERIAL");
-	  // Read X-ray serial numbers from config
-  StringParameter *xrSN1 = params.conf->GetParameter<StringParameter>("XRaySerialNumber");
-  const char* serialNum1 = xrSN1 ? xrSN1->StrVal.c_str() : NULL;
-  
-  // Connect and init first XRay tube
-  if(serialNum1) {
-    printf("Initializing first X-ray tube with serial number: %s\n", serialNum1);
-  } else {
-    printf("Initializing first X-ray tube (no serial number specified)\n");
-  }
-  fXRay = new XRay(serialNum1);  
-  gSystem->Sleep(200);
-
-	gXRay = new XRay(serialEnv);
-
+	
 	// Create and show GUI, passing hardware driver pointer
 	new XR::XRayGui(gClient->GetRoot(), gXRay, 420, 340);
 

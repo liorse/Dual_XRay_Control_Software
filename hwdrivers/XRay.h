@@ -2,7 +2,7 @@
 #define XRAY_H
 
 #include <stdio.h>
-#include "viewer/Vparams.h"
+#include "../Vparams.h"
 #ifdef _WIN32
 #include "hwdrivers/miniX/MiniXAPI.h"
 #else

@@ -1,4 +1,5 @@
-#include "viewer/Vparams.h"
+#include "stdafx.h"
+#include "Vparams.h"
 #include <TTimeStamp.h>
 
 Vparams* Vparams::pParams(0);
