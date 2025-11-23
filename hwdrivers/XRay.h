@@ -39,6 +39,7 @@ class XRay
   void ReadXRayTemperature();
   void ReadXRayData();
   HWmode_t GetXRayMode() {return fXRayMode;};
+  const char* GetSerialNumber() {return fSerialNumber.c_str();};
   void SetDebugLevel(Int_t newdebug){debug = newdebug;};
   void GetDeviceList();
   long GetDeviceCount();

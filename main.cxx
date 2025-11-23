@@ -49,9 +49,13 @@ int main() {
 
     if (cmd == "INIT") {
       if (xr) { delete xr; xr = nullptr; }
-      const char* sn = (tok.size() >= 2 && !tok[1].empty()) ? tok[1].c_str() : NULL;
-      xr = new XRay(sn);
-      server.writeLine("OK");
+      // Always connect to first device (device 0), ignoring serial number parameter
+      xr = new XRay(nullptr);
+      // Return the serial number of the connected device
+      const char* serial = xr ? xr->GetSerialNumber() : "";
+      char buf[128];
+      std::snprintf(buf, sizeof(buf), "OK|%s", serial);
+      server.writeLine(buf);
     } else if (cmd == "SET_POWER") {
       if (!xr) { server.writeLine("ERR|noinst"); continue; }
       int p = (tok.size() >= 2) ? std::atoi(tok[1].c_str()) : 0;

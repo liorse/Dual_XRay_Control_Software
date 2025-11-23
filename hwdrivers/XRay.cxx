@@ -144,41 +144,23 @@ XRay::XRay(const char *serialNumber)
 
     if (deviceCount > 0)
     {
-      // List all devices
-      for (long i = 0; i < deviceCount; i++)
-      {
-        char serialNumber[256];
-        GetDeviceSerialNumberByIndex(i, serialNumber);
-        printf("  Device %ld: Serial Number %s\n", i, serialNumber);
-
-        // If serial number was specified, find matching device
-        if (!fSerialNumber.empty() && string(serialNumber) == fSerialNumber)
-        {
-          fDeviceIndex = i;
-          printf("  -> Matched requested serial number %s\n", fSerialNumber.c_str());
-        }
-      }
-
-      // Select device
-      if (fDeviceIndex >= 0)
-      {
-        SetDevice(fDeviceIndex);
-        printf("Selected device %ld with serial number %s\n", fDeviceIndex, fSerialNumber.c_str());
-      }
-      else if (!fSerialNumber.empty())
-      {
-        printf("WARNING: Requested serial number %s not found!\n", fSerialNumber.c_str());
-        printf("Switching to SIMULATION mode\n");
-        fXRayMode = SIMULATION;
-        fDeviceIndex = -1;
-      }
-      else
-      {
-        // No serial number specified, use first device
-        fDeviceIndex = 0;
-        SetDevice(0);
-        printf("Selected device 0 (no serial number specified)\n");
-      }
+   
+      // Try to connect to first device (device 0) and retrieve its serial number
+      printf("Attempting to connect to device 0...\n");
+	  char serialNumber[256];
+	  GetDeviceSerialNumberByIndex(0, serialNumber);
+      fSerialNumber = string(serialNumber);
+      SetDevice(0);
+      printf("Successfully connected to device 0 with serial number: %s\n", fSerialNumber.c_str());
+    
+    }
+    else
+    {
+      // No devices found - run in simulation mode
+      printf("No X-ray devices found. Running in SIMULATION mode\n");
+      fXRayMode = SIMULATION;
+      fDeviceIndex = -1;
+      fSerialNumber = "SIM_MODE";
     }
 
     if (fXRayMode != SIMULATION)

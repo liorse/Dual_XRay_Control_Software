@@ -143,9 +143,19 @@ public:
 		gClient->GetColorByName("green", green_);
 		gClient->GetColorByName("red", red_);
 
-		// Root vertical layout - set title to include serial number
-		std::string serialCfg = ReadXRaySerialFromConfig("qsv.conf");
-		std::string groupTitle = serialCfg.empty() ? "X-ray" : "X-ray - " + serialCfg;
+		// Root vertical layout - set title to include serial number from connected device
+		// or indicate simulation mode
+		std::string groupTitle = "X-ray";
+		if (xray_) {
+			if (xray_->GetXRayMode() == SIMULATION) {
+				groupTitle = "X-ray - SIMULATION MODE";
+			} else {
+				const char* deviceSerial = xray_->GetSerialNumber();
+				if (deviceSerial && deviceSerial[0]) {
+					groupTitle = std::string("X-ray - ") + deviceSerial;
+				}
+			}
+		}
 		auto* xrGroup = new TGGroupFrame(this, groupTitle.c_str());
 		xrGroup->SetTitlePos(TGGroupFrame::kCenter);
 
@@ -475,11 +485,15 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 	if (gLogFile) fprintf(gLogFile, "=== X-ray Control Software Started ===\n");
 
 	// Create XRay hardware instance before GUI
-	std::string serialCfg = ReadXRaySerialFromConfig("qsv.conf");
-	const char* serialEnv = getenv("XRAY_SERIAL");
-	std::string serial = !serialCfg.empty() ? serialCfg : (serialEnv ? std::string(serialEnv) : std::string());
-	if (gLogFile) fprintf(gLogFile, "Creating XRay with serial: %s\n", serial.empty() ? "(none)" : serial.c_str());
-	gXRay = new XRay(serial.empty() ? nullptr : serial.c_str());
+	// Connect to first available device (device 0) regardless of serial number
+	if (gLogFile) fprintf(gLogFile, "Creating XRay connection to first available device\n");
+	gXRay = new XRay(nullptr);
+	
+	// Log the connected device serial number
+	if (gXRay && gLogFile) {
+		const char* serial = gXRay->GetSerialNumber();
+		fprintf(gLogFile, "Connected to device with serial: %s\n", serial ? serial : "(none)");
+	}
 	
 	// Set default values from config immediately after connecting
 	if (gXRay) {
