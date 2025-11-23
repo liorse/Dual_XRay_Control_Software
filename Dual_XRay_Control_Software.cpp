@@ -50,10 +50,15 @@
 #include "hwdrivers/XRay.h"
 #include "TSystem.h"
 #include "Vparams.h"
+#include "ipc/NamedPipeServer.h"
+#include "TThread.h"
+#include <vector>
 
 // Global XRay instance (hardware driver). Created in WinMain.
-static XRay* gXRay = nullptr;
-static FILE* gLogFile = nullptr;
+static XRay* gXRay = NULL;
+static FILE* gLogFile = NULL;
+static Bool_t gServerRunning = kFALSE;
+static TMutex gServerMutex;
 
 // Read XRaySerialNumber "XXXXXXXX" from a simple key-value config file.
 static std::string ReadXRaySerialFromConfig(const char* path)
@@ -112,6 +117,154 @@ static double ReadNumericFromConfig(const char* path, const char* paramName, dou
 		}
 	}
 	return defaultVal;
+}
+
+// Helper to split strings for pipe server
+static void SplitPipeTokens(const std::string& s, char delim, std::vector<std::string>& out) {
+	out.clear();
+	size_t start = 0;
+	while (start <= s.size()) {
+		size_t pos = s.find(delim, start);
+		if (pos == std::string::npos) { out.push_back(s.substr(start)); break; }
+		out.push_back(s.substr(start, pos - start));
+		start = pos + 1;
+	}
+}
+
+// Named pipe server thread function
+static void* ServerThreadFunc(void* arg) {
+	XRay* xray = (XRay*)arg;
+	const char* pipeEnv = getenv("XRAY_PIPE_NAME");
+	std::string pipeName = pipeEnv && pipeEnv[0] ? std::string(pipeEnv) : std::string("\\\\.\\pipe\\XRayService");
+	
+	if (gLogFile) fprintf(gLogFile, "Starting named pipe server on %s\n", pipeName.c_str());
+	
+	NamedPipeServer server(pipeName);
+	if (!server.listen()) {
+		if (gLogFile) fprintf(gLogFile, "Failed to create named pipe: %s\n", pipeName.c_str());
+		return NULL;
+	}
+	
+	if (gLogFile) fprintf(gLogFile, "Named pipe server listening, waiting for client...\n");
+	
+	Bool_t running;
+	gServerMutex.Lock();
+	running = gServerRunning;
+	gServerMutex.UnLock();
+	
+	while (running) {
+		if (!server.accept()) {
+			if (gLogFile) fprintf(gLogFile, "Failed to accept client connection\n");
+			break;
+		}
+		
+		if (gLogFile) fprintf(gLogFile, "Client connected to pipe server\n");
+		
+		// Handle client requests
+		gServerMutex.Lock();
+		running = gServerRunning;
+		gServerMutex.UnLock();
+		
+		while (running) {
+			std::string line;
+			if (!server.readLine(line)) break;
+			
+			std::vector<std::string> tok;
+			SplitPipeTokens(line, '|', tok);
+			if (tok.empty()) {
+				server.writeLine("ERR|empty");
+				continue;
+			}
+			
+			const std::string& cmd = tok[0];
+			
+			if (cmd == "GET_STATE") {
+				if (!xray) {
+					server.writeLine("ERR|noinst");
+					continue;
+				}
+				XRay::XRayState st = xray->GetXRayState();
+			char buf[256];
+			sprintf(buf, "OK|%d|%f|%f|%f|%f|%f|%f",
+				st.Power ? 1 : 0, st.VoltageToSet, st.ActualVoltage,
+					st.CurrentToSet, st.ActualCurrent, st.ActualPower, st.Temperature);
+				server.writeLine(buf);
+			}
+			else if (cmd == "SET_POWER") {
+				if (!xray) {
+					server.writeLine("ERR|noinst");
+					continue;
+				}
+				int p = (tok.size() >= 2) ? std::atoi(tok[1].c_str()) : 0;
+				if (tok.size() >= 3) xray->SetXRayVoltage((Float_t)std::atof(tok[2].c_str()));
+				if (tok.size() >= 4) xray->SetXRayCurrent((Float_t)std::atof(tok[3].c_str()));
+				xray->SetXRayState(p ? kTRUE : kFALSE);
+				server.writeLine("OK");
+			}
+			else if (cmd == "SET_VOLTAGE") {
+				if (!xray) {
+					server.writeLine("ERR|noinst");
+					continue;
+				}
+				if (tok.size() >= 2) xray->SetXRayVoltage((Float_t)std::atof(tok[1].c_str()));
+				server.writeLine("OK");
+			}
+			else if (cmd == "SET_CURRENT") {
+				if (!xray) {
+					server.writeLine("ERR|noinst");
+					continue;
+				}
+				if (tok.size() >= 2) xray->SetXRayCurrent((Float_t)std::atof(tok[1].c_str()));
+				server.writeLine("OK");
+			}
+			else if (cmd == "READ_DATA") {
+				if (!xray) {
+					server.writeLine("ERR|noinst");
+					continue;
+				}
+			xray->ReadXRayData();
+			XRay::XRayState st = xray->GetXRayState();
+			char buf[256];
+			sprintf(buf, "OK|%d|%f|%f|%f|%f|%f|%f",
+				st.Power ? 1 : 0, st.VoltageToSet, st.ActualVoltage,
+				st.CurrentToSet, st.ActualCurrent, st.ActualPower, st.Temperature);
+			server.writeLine(buf);
+			}
+			else if (cmd == "GET_SERIAL") {
+				if (!xray) {
+					server.writeLine("ERR|noinst");
+					continue;
+				}
+			const char* serial = xray->GetSerialNumber();
+			char buf[128];
+			sprintf(buf, "OK|%s", serial ? serial : "");
+			server.writeLine(buf);
+			}
+			else if (cmd == "SHUTDOWN") {
+				server.writeLine("OK");
+				gServerMutex.Lock();
+				gServerRunning = kFALSE;
+				gServerMutex.UnLock();
+				break;
+			}
+			else {
+				server.writeLine("ERR|unknown_cmd");
+			}
+			
+			gServerMutex.Lock();
+			running = gServerRunning;
+			gServerMutex.UnLock();
+		}
+		
+		if (gLogFile) fprintf(gLogFile, "Client disconnected from pipe server\n");
+		
+		gServerMutex.Lock();
+		running = gServerRunning;
+		gServerMutex.UnLock();
+	}
+	
+	if (gLogFile) fprintf(gLogFile, "Named pipe server stopped\n");
+	return NULL;
 }
 
 // A small self-contained ROOT GUI that replicates the X-ray panel from EventDisplay.cxx
@@ -505,17 +658,37 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 		gXRay->SetXRayHVAndCurrent();
 	}
 	
+	// Start named pipe server in background thread
+	gServerMutex.Lock();
+	gServerRunning = kTRUE;
+	gServerMutex.UnLock();
+	
+	TThread* serverThread = new TThread("XRayServerThread", ServerThreadFunc, (void*)gXRay);
+	serverThread->Run();
+	if (gLogFile) fprintf(gLogFile, "Named pipe server thread started\n");
+	
 	// Create and show GUI, passing hardware driver pointer
 	new XR::XRayGui(gClient->GetRoot(), gXRay, 420, 340);
 
+	// Run GUI event loop
 	app.Run();
 
 	// Cleanup
-	if (gXRay) { delete gXRay; gXRay = nullptr; }
+	if (gLogFile) fprintf(gLogFile, "GUI closed, shutting down server...\n");
+	gServerMutex.Lock();
+	gServerRunning = kFALSE;
+	gServerMutex.UnLock();
+	
+	if (serverThread) {
+		serverThread->Join();
+		delete serverThread;
+	}
+	
+	if (gXRay) { delete gXRay; gXRay = NULL; }
 	if (gLogFile) { 
 		fprintf(gLogFile, "=== Application Shutdown ===\n");
 		fclose(gLogFile); 
-		gLogFile = nullptr; 
+		gLogFile = NULL; 
 	}
 	return 0;
 
