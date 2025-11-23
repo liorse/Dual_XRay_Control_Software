@@ -5,6 +5,7 @@
 #include "Dual_XRay_Control_Software.h"
 #include <fstream>
 #include <string>
+#include <time.h>
 
 
 // Protect against macro collisions coming from Windows headers.
@@ -59,6 +60,7 @@ static XRay* gXRay = NULL;
 static FILE* gLogFile = NULL;
 static Bool_t gServerRunning = kFALSE;
 static TMutex gServerMutex;
+static std::string gPipeName;
 
 // Read XRaySerialNumber "XXXXXXXX" from a simple key-value config file.
 static std::string ReadXRaySerialFromConfig(const char* path)
@@ -134,18 +136,30 @@ static void SplitPipeTokens(const std::string& s, char delim, std::vector<std::s
 // Named pipe server thread function
 static void* ServerThreadFunc(void* arg) {
 	XRay* xray = (XRay*)arg;
-	const char* pipeEnv = getenv("XRAY_PIPE_NAME");
-	std::string pipeName = pipeEnv && pipeEnv[0] ? std::string(pipeEnv) : std::string("\\\\.\\pipe\\XRayService");
+	std::string pipeName = gPipeName.empty() ? std::string("\\\\.\\pipe\\XRayService") : gPipeName;
 	
-	if (gLogFile) fprintf(gLogFile, "Starting named pipe server on %s\n", pipeName.c_str());
+	if (gLogFile) {
+		fprintf(gLogFile, "===========================================\n");
+		fprintf(gLogFile, "NAMED PIPE SERVER STARTING\n");
+		fprintf(gLogFile, "Pipe name: %s\n", pipeName.c_str());
+		fprintf(gLogFile, "===========================================\n");
+		fflush(gLogFile);
+	}
 	
 	NamedPipeServer server(pipeName);
 	if (!server.listen()) {
-		if (gLogFile) fprintf(gLogFile, "Failed to create named pipe: %s\n", pipeName.c_str());
+		if (gLogFile) {
+			fprintf(gLogFile, "ERROR: Failed to create named pipe: %s\n", pipeName.c_str());
+			fflush(gLogFile);
+		}
 		return NULL;
 	}
 	
-	if (gLogFile) fprintf(gLogFile, "Named pipe server listening, waiting for client...\n");
+	if (gLogFile) {
+		fprintf(gLogFile, "SUCCESS: Named pipe server listening on: %s\n", pipeName.c_str());
+		fprintf(gLogFile, "Waiting for client connection...\n");
+		fflush(gLogFile);
+	}
 	
 	Bool_t running;
 	gServerMutex.Lock();
@@ -154,11 +168,17 @@ static void* ServerThreadFunc(void* arg) {
 	
 	while (running) {
 		if (!server.accept()) {
-			if (gLogFile) fprintf(gLogFile, "Failed to accept client connection\n");
+			if (gLogFile) {
+				fprintf(gLogFile, "ERROR: Failed to accept client connection\n");
+				fflush(gLogFile);
+			}
 			break;
 		}
 		
-		if (gLogFile) fprintf(gLogFile, "Client connected to pipe server\n");
+		if (gLogFile) {
+			fprintf(gLogFile, "SUCCESS: Client connected to pipe server: %s\n", pipeName.c_str());
+			fflush(gLogFile);
+		}
 		
 		// Handle client requests
 		gServerMutex.Lock();
@@ -533,17 +553,7 @@ private:
 			}
 		}
 		// Update widget visuals
-		if (powerOn_) {
-			lblPowerState_->SetText("Is on");
-			lblPowerState_->SetBackgroundColor(red_);
-			lblPowerState_->SetForegroundColor(white_);
-			btnPower_->SetText("Switch off");
-		} else {
-			lblPowerState_->SetText("Is off");
-			lblPowerState_->SetBackgroundColor(green_);
-			lblPowerState_->SetForegroundColor(red_);
-			btnPower_->SetText("Switch on");
-		}
+		UpdatePowerWidgets();
 		RecalcPower(); RefreshXRLabels(); UpdateStatus();
 	}
 
@@ -569,14 +579,34 @@ private:
 		status_->SetText(s);
 	}
 
+	void UpdatePowerWidgets() {
+		// Update widget visuals based on current power state
+		if (powerOn_) {
+			lblPowerState_->SetText("Is on");
+			lblPowerState_->SetBackgroundColor(red_);
+			lblPowerState_->SetForegroundColor(white_);
+			btnPower_->SetText("Switch off");
+		} else {
+			lblPowerState_->SetText("Is off");
+			lblPowerState_->SetBackgroundColor(green_);
+			lblPowerState_->SetForegroundColor(red_);
+			btnPower_->SetText("Switch on");
+		}
+	}
+
 	void PullHardwareState() {
 		if (!xray_) return;
 		xray_->ReadXRayData();
 		XRay::XRayState st = xray_->GetXRayState();
+		Bool_t prevPower = powerOn_;
 		powerOn_ = st.Power;
 		setV_kV_ = st.VoltageToSet; monV_kV_ = st.ActualVoltage;
 		setI_uA_ = st.CurrentToSet; monI_uA_ = st.ActualCurrent;
 		power_mW_ = st.ActualPower; temp_C_ = st.Temperature;
+		// Update UI widgets if power state changed
+		if (prevPower != powerOn_) {
+			UpdatePowerWidgets();
+		}
 	}
 
 private:
@@ -627,15 +657,48 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 					 LPTSTR    lpCmdLine,
 					 int       nCmdShow)
 {
+	// Parse command line for pipe name
+	if (lpCmdLine && lpCmdLine[0]) {
+		#ifdef UNICODE
+		char cmdLine[512];
+		WideCharToMultiByte(CP_ACP, 0, lpCmdLine, -1, cmdLine, sizeof(cmdLine), NULL, NULL);
+		gPipeName = std::string(cmdLine);
+		#else
+		gPipeName = std::string(lpCmdLine);
+		#endif
+		
+		// Remove surrounding quotes if present
+		if (gPipeName.length() >= 2 && gPipeName[0] == '"' && gPipeName[gPipeName.length()-1] == '"') {
+			gPipeName = gPipeName.substr(1, gPipeName.length() - 2);
+		}
+	}
 
 	// Run a ROOT-based X-ray control GUI closely modeled after EventDisplay's XR panel.
 	int argc = 1;
 	char* argv[] = { (char*)"DualXRApp", nullptr };
 	TApplication app("DualXRApp", &argc, argv);
 
-	// Open log file
-	gLogFile = fopen("xray_debug.log", "w");
-	if (gLogFile) fprintf(gLogFile, "=== X-ray Control Software Started ===\n");
+	// Open log file with timestamp
+	time_t now = time(NULL);
+	struct tm* t = localtime(&now);
+	char logFileName[256];
+	sprintf(logFileName, "xray_debug_%04d-%02d-%02d_%02d-%02d-%02d.log",
+		t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+		t->tm_hour, t->tm_min, t->tm_sec);
+	
+	gLogFile = fopen(logFileName, "w");
+	if (gLogFile) {
+		fprintf(gLogFile, "=== X-ray Control Software Started ===\n");
+		fprintf(gLogFile, "Log file: %s\n", logFileName);
+		fprintf(gLogFile, "Command line arguments: %s\n", lpCmdLine ? "provided" : "none");
+		if (!gPipeName.empty()) {
+			fprintf(gLogFile, "Pipe name from command line: %s\n", gPipeName.c_str());
+		} else {
+			fprintf(gLogFile, "Using default pipe name: \\\\.\\pipe\\XRayService\n");
+		}
+		fprintf(gLogFile, "\n");
+		fflush(gLogFile);
+	}
 
 	// Create XRay hardware instance before GUI
 	// Connect to first available device (device 0) regardless of serial number
